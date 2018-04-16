@@ -1,0 +1,110 @@
+---
+title: "EBSA summaries"
+author: "OBIS (Samuel Bosch and Pieter Provoost"
+date: "4/13/2018"
+output: pdf_document
+params: 
+  ebsafile: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+
+data <- readRDS(params$ebsafile)
+occ <- data$occ
+taxa <- data$taxa
+for(col in c('redlist', 'gisd', 'hab')) {
+  if(!col %in% colnames(taxa)) {
+    taxa[,col] <- NA
+  }
+}
+```
+
+# Overview
+
+```{r}
+overview <- list(Records = nrow(occ),
+     Datasets = length(unique(occ$resource_id)),
+     'Contributing institutes'= length(unique(occ$institutionCode)),
+     Taxa = nrow(taxa),
+     Species = data$taxa %>% filter(!is.na(rank_name) & rank_name == 'Species') %>% nrow,
+     'Red List species' = taxa %>% filter(!is.na(redlist) & redlist == TRUE) %>% nrow,
+     'Invasive species' = taxa %>% filter(!is.na(gisd) & gisd == TRUE) %>% nrow,
+     'Harmful microalgae' = taxa %>% filter(!is.na(hab) & hab == TRUE) %>% nrow,
+     'Only observed here' = taxa %>% filter(!is.na(rank_name) & rank_name == 'Species' & ebsa_record_count >= records) %>% nrow)
+overview <- data.frame(What=names(overview), Count=unlist(overview))
+knitr::kable(overview, row.names = FALSE, col.names = FALSE)
+```
+
+# Records per year and taxonomic group (1950 - present)
+
+```{r}
+ggplot(occ %>% filter(year >= 1950), aes(year, fill=taxonomicgroup)) + 
+  geom_bar() +
+  theme(legend.position="bottom") +
+  labs(fill="Taxonomic group", x="Year", y="Count") +
+  scale_x_discrete("Year", seq(1950, 2010, by=10)) +
+  theme(legend.text=element_text(size=8), legend.key = element_rect(size=2))
+```
+
+
+# Species per taxonomic group
+
+```{r}
+ggplot(occ, aes(x=taxonomicgroup, fill=taxonomicgroup)) + 
+  geom_bar() + 
+  coord_flip() + 
+  theme(legend.position="none") +
+  labs(x="Count", y="")
+```
+
+# Species accumulation (1950 - present)
+
+```{r}
+countbyyear <- occ %>% filter(!is.na(year)) %>% group_by(year) %>% summarise(count=n())
+
+ggplot(countbyyear, aes(x=as.numeric(year), y=cumsum(count))) + 
+  geom_bar(stat="identity") + 
+  xlim(1950, max(as.numeric(countbyyear$year), na.rm=T)) +
+  labs(x="Year", y="Count")
+```
+
+
+# Sampling events
+
+```{r}
+eventsbyyear <- occ %>% select(year, eventDate, resource_id, depth, decimalLongitude, decimalLatitude) %>% 
+  distinct() %>% 
+  group_by(year) %>% 
+  summarise(count=n())
+
+ggplot(eventsbyyear, aes(x=as.numeric(year), y=count)) + 
+  geom_bar(stat = "identity") + 
+  xlim(1950, max(as.numeric(eventsbyyear$year), na.rm=T)) +
+  labs(x="Year", y="Count")
+```
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
