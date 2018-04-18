@@ -28,6 +28,36 @@ generate_ebsa_summaries <- function() {
         t <- robis::taxon(obisid = obisid)
         cbind(t, ebsa_record_count = obisid_table[paste(obisid)])
       }))
+
+      datasets <- lapply(unique(occ$resource_id), function(id) {
+        r <- httr::GET(paste0('http://api.iobis.org/resource/', id))
+        d <- httr::content(r)
+        provider <- ifelse(is.null(d$provider$name), '', d$provider$name)
+        institutes <- bind_rows(d$institutes)
+        institutes$resource_id <- rep(as.integer(id), NROW(institutes))
+        list(dataset=data_frame(resource_id=id, name=d$name, node=d$node$name, provider=provider, taxon_cnt=d$taxon_cnt, record_cnt=d$record_cnt),
+             institutes=institutes)
+      })
+
+      datasetrecordcount <- data$occ %>%
+        group_by(resource_id) %>%
+        summarise(ebsa_record_count=n())
+      datasettaxacount <- data$occ %>%
+        select(resource_id, valid_id) %>%
+        distinct() %>%
+        group_by(resource_id) %>%
+        summarise(ebsa_taxa_count = n())
+
+      data$datasets <- bind_rows(lapply(datasets, function(d) d$dataset)) %>%
+        left_join(datasetrecordcount) %>%
+        left_join(datasettaxacount)
+
+      data$institutes <- bind_rows(lapply(datasets, function(d) d$institutes)) %>%
+        left_join(datasetrecordcount) %>%
+        left_join(datasettaxacount) %>%
+        group_by(id, name, acronym, parent) %>%
+        summarise(datasets = n(), ebsa_record_count = sum(ebsa_record_count), ebsa_taxa_count = sum(ebsa_taxa_count))
+
       saveRDS(data, ebsafile)
     }
     outputfile <- rmarkdown::render('scripts/summaries.Rmd', output_file = paste0('ebsa_', id, '.pdf'), output_dir = 'reports', params = list(ebsafile = ebsafile))

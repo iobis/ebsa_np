@@ -5,6 +5,8 @@ date: "4/13/2018"
 output: pdf_document
 params: 
   ebsafile: ""
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -14,13 +16,19 @@ library(dplyr)
 library(ggplot2)
 
 data <- readRDS(params$ebsafile)
-occ <- data$occ
-taxa <- data$taxa
-for(col in c('redlist', 'gisd', 'hab')) {
+occ <- data$occ %>% as_tibble()
+taxa <- data$taxa %>% as_tibble()
+for(col in c('redlist', 'gisd', 'hab', 'status')) {
   if(!col %in% colnames(taxa)) {
     taxa[,col] <- NA
   }
 }
+species_taxonomicgroups <- occ %>% select(valid_id, taxonomicgroup) %>% distinct()
+taxa <- taxa %>% left_join(species_taxonomicgroups)
+taxa[,'only_observed_here'] <- !is.na(taxa$rank_name) & taxa$rank_name == 'Species' & taxa$ebsa_record_count >= taxa$records
+
+top <- 20
+
 ```
 
 # Overview
@@ -34,12 +42,15 @@ overview <- list(Records = nrow(occ),
      'Red List species' = taxa %>% filter(!is.na(redlist) & redlist == TRUE) %>% nrow,
      'Invasive species' = taxa %>% filter(!is.na(gisd) & gisd == TRUE) %>% nrow,
      'Harmful microalgae' = taxa %>% filter(!is.na(hab) & hab == TRUE) %>% nrow,
-     'Only observed here' = taxa %>% filter(!is.na(rank_name) & rank_name == 'Species' & ebsa_record_count >= records) %>% nrow)
+     'Only observed here' = taxa %>% filter(!is.na(only_observed_here) & only_observed_here == TRUE) %>% nrow)
 overview <- data.frame(What=names(overview), Count=unlist(overview))
 knitr::kable(overview, row.names = FALSE, col.names = FALSE)
 ```
 
 # Records per year and taxonomic group (1950 - present)
+
+
+
 
 ```{r}
 ggplot(occ %>% filter(year >= 1950), aes(year, fill=taxonomicgroup)) + 
@@ -87,24 +98,115 @@ ggplot(eventsbyyear, aes(x=as.numeric(year), y=count)) +
   labs(x="Year", y="Count")
 ```
 
+# Red list species (top `r top`)
 
-
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r}
+# exponential ranking function
+exprank <- function(values) { 1000**(rank(values, ties.method = 'max') / length(values)) }
+redlisttable <- taxa %>% filter(!is.na(redlist) & redlist == TRUE) %>% 
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100, 
+         statusimportance = unlist(list('EX'=10, 'EW'=10, 'CR'=10, 'EN'=8, 'VU'=7, 'NT'=4, 'LC'=2, 'DD'=1)[status]),
+         rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5 + exprank(statusimportance)) %>%
+  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  select(Name=tname, Group=taxonomicgroup, Status=status, 
+         'Total records' = records, 'Area records'= ebsa_record_count,
+         '% in area' = perc_ebsa)
+knitr::kable(redlisttable, digits = 2)
 ```
 
-## Including Plots
+# Invasive species (top `r top`)
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+invasivestable <- taxa %>% filter(!is.na(gisd) & gisd == TRUE) %>% 
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100,
+         rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5) %>%
+  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  select(Name=tname, Group=taxonomicgroup, 'Total records' = records, 
+         'Area records'= ebsa_record_count, '% in area' = perc_ebsa)
+knitr::kable(invasivestable, digits = 2)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+# Harmful microalgae (top `r top`)
+
+```{r}
+habtable <- taxa %>% filter(!is.na(hab) & hab == TRUE) %>% 
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100,
+         rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5) %>%
+  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  select(Name=tname, Group=taxonomicgroup, 'Total records' = records, 
+         'Area records'= ebsa_record_count, '% in area' = perc_ebsa)
+knitr::kable(habtable, digits = 2)
+```
+
+# Observed in this area only (top `r top`)
+
+```{r}
+onlyobservedtable <- taxa %>% filter(!is.na(only_observed_here) & only_observed_here == TRUE) %>% 
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100,
+         rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5) %>%
+  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  select(Name=tname, Group=taxonomicgroup, 'Total records' = records, 
+         'Area records'= ebsa_record_count, '% in area' = perc_ebsa)
+knitr::kable(onlyobservedtable, digits = 2)
+```
+
+# Newest species in this area (top `r top`)
+
+```{r}
+newesttable <- occ %>% 
+  group_by(valid_id, taxonomicgroup) %>% 
+  summarise(max_year=max(year)) %>% 
+  left_join(taxa) %>% 
+  filter(rank_name == "Species" & !is.na(max_year)) %>% 
+  arrange(desc(max_year)) %>% 
+  top_n(top, max_year) %>%
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100) %>%
+  select(Name = tname, Records = records, 'Area records' = ebsa_record_count, 
+         '% in area' = perc_ebsa, 'Last record' = max_year)
+
+knitr::kable(newesttable, digits = 2)
+```
+
+# No longer observed in this area since 1950 (top `r top`)
+
+```{r}
+before1950table <- occ %>% 
+  group_by(valid_id, taxonomicgroup) %>% 
+  summarise(max_year=max(year)) %>% 
+  left_join(taxa) %>% 
+  filter(rank_name == "Species" & !is.na(max_year) & max_year < 1950) %>% 
+  arrange(desc(ebsa_record_count)) %>% 
+  top_n(top, ebsa_record_count) %>%
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100) %>%
+  select(Name = tname, Records = records, 'Area records' = ebsa_record_count, 
+         '% in area' = perc_ebsa, 'Last record' = max_year)
+
+knitr::kable(before1950table, digits = 2)
+```
+
+# Datasets (top `r top`)
+
+```{r}
+datasetstable <- data$datasets %>% 
+  arrange(desc(ebsa_record_count)) %>%
+  top_n(top, ebsa_record_count) %>%
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100) %>%
+  select(Name=name, Node=node, Provider=provider, 
+         Taxa=taxon_cnt, 'Area taxa' = ebsa_taxa_count, 
+         Records=record_cnt, 'Area records'=ebsa_record_count,
+         '% in area' = perc_ebsa)
+knitr::kable(datasetstable, digits = 2)
+```
+
+# Institutes (top `r top`)
+
+```{r}
+institutestable <- data$institutes %>%
+  arrange(desc(ebsa_record_count)) %>%
+  top_n(top, ebsa_record_count) %>%
+  select(Name = name, Acronym = acronym, 'Parent institute' = parent, 
+         Datasets = datasets, 'Area taxa'=ebsa_taxa_count, 
+         'Area records' = ebsa_record_count)
+knitr::kable(institutestable, digits = 2)
+```
+
