@@ -1,21 +1,43 @@
 ---
-title: "EBSA summaries"
-author: "OBIS (Samuel Bosch and Pieter Provoost"
-date: "4/13/2018"
-output: pdf_document
+author: "OBIS (Samuel Bosch and Pieter Provoost)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  pdf_document:
+    fig_width: 7 
+    fig_height: 4
 params: 
   ebsafile: ""
+  id: ""
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: inline
+header-includes:
+- \usepackage{pdflscape}
+- \usepackage{float}
+- \usepackage{array}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+---
+title: "EBSA summaries (`r params$id`)"
+---
+
+```{r getdata, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = TRUE)
+knitr::opts_chunk$set(message = FALSE)
 
 library(dplyr)
 library(ggplot2)
+library(sf)
 
-data <- readRDS(params$ebsafile)
+if(file.exists(params$ebsafile)) {
+  data <- readRDS(params$ebsafile)
+} else {
+  warning("USING TEST FILE")
+  data <- readRDS('../data/ebsa_NP_19.rds')
+}
+
 occ <- data$occ %>% as_tibble()
 taxa <- data$taxa %>% as_tibble()
 for(col in c('redlist', 'gisd', 'hab', 'status')) {
@@ -33,7 +55,7 @@ top <- 20
 
 # Overview
 
-```{r}
+```{r overview}
 overview <- list(Records = nrow(occ),
      Datasets = length(unique(occ$resource_id)),
      'Contributing institutes'= length(unique(occ$institutionCode)),
@@ -43,16 +65,40 @@ overview <- list(Records = nrow(occ),
      'Invasive species' = taxa %>% filter(!is.na(gisd) & gisd == TRUE) %>% nrow,
      'Harmful microalgae' = taxa %>% filter(!is.na(hab) & hab == TRUE) %>% nrow,
      'Only observed here' = taxa %>% filter(!is.na(only_observed_here) & only_observed_here == TRUE) %>% nrow)
-overview <- data.frame(What=names(overview), Count=unlist(overview))
-knitr::kable(overview, row.names = FALSE, col.names = FALSE)
+overview <- data.frame(What=names(overview), Count=unlist(overview), row.names = 1:length(overview), stringsAsFactors = FALSE)
+knitr::kable(overview, col.names = c('',''))
 ```
+
+```{r overviewmap}
+# xrange <- range(occ$decimalLongitude)
+# yrange <- range(occ$decimalLatitude)
+# dx <- 0.3 * (xrange[2] - xrange[1])
+# dy <- 0.3 * (yrange[2] - yrange[1])
+# xrange[1] <- max(xrange[1] - dx, -180.0)
+# xrange[2] <- min(xrange[2] + dx, 180.0)
+# yrange[1] <- max(yrange[1] - dy, -90)
+# yrange[2] <- min(yrange[2] + dy, 90)
+occ_sample <- occ
+if(nrow(occ_sample) > 10000) {
+  occ_sample <- occ_sample %>% 
+    mutate(lon_round = round(decimalLongitude, digits=1), lat_round = round(decimalLatitude, digits=1)) %>%
+    group_by(lon_round, lat_round) %>%
+    sample_n(1)
+}
+
+ggplot() +
+  geom_sf(data = sf::st_as_sf(maps::map('world', plot = FALSE, fill = TRUE)), colour="gray80", fill="gray80") +
+  geom_sf(data=data_frame(geometry=data$geom)) + 
+  geom_point(data = occ_sample, aes(x = decimalLongitude, y = decimalLatitude), size = 1, stroke = 0.5, alpha = 0.3, colour = "#FF368B") +
+  xlab("Longitude") +
+  ylab("Latitude") # +
+  # coord_sf(xlim = xrange, ylim = yrange)
+```
+
 
 # Records per year and taxonomic group (1950 - present)
 
-
-
-
-```{r}
+```{r peryearpertaxa}
 ggplot(occ %>% filter(year >= 1950), aes(year, fill=taxonomicgroup)) + 
   geom_bar() +
   theme(legend.position="bottom") +
@@ -64,7 +110,7 @@ ggplot(occ %>% filter(year >= 1950), aes(year, fill=taxonomicgroup)) +
 
 # Species per taxonomic group
 
-```{r}
+```{r sppertaxa}
 ggplot(occ, aes(x=taxonomicgroup, fill=taxonomicgroup)) + 
   geom_bar() + 
   coord_flip() + 
@@ -74,7 +120,7 @@ ggplot(occ, aes(x=taxonomicgroup, fill=taxonomicgroup)) +
 
 # Species accumulation (1950 - present)
 
-```{r}
+```{r spacc}
 countbyyear <- occ %>% filter(!is.na(year)) %>% group_by(year) %>% summarise(count=n())
 
 ggplot(countbyyear, aes(x=as.numeric(year), y=cumsum(count))) + 
@@ -86,7 +132,7 @@ ggplot(countbyyear, aes(x=as.numeric(year), y=cumsum(count))) +
 
 # Sampling events
 
-```{r}
+```{r samplingevents}
 eventsbyyear <- occ %>% select(year, eventDate, resource_id, depth, decimalLongitude, decimalLatitude) %>% 
   distinct() %>% 
   group_by(year) %>% 
@@ -100,14 +146,18 @@ ggplot(eventsbyyear, aes(x=as.numeric(year), y=count)) +
 
 # Red list species (top `r top`)
 
-```{r}
+```{r redlistsp}
 # exponential ranking function
-exprank <- function(values) { 1000**(rank(values, ties.method = 'max') / length(values)) }
+exprank <- function(values) { 1000**(rank(values, na.last=FALSE, ties.method = 'max') / length(values)) }
+statusimportance <- function(status) {
+  importance <- list('EX'=10, 'EW'=10, 'CR'=10, 'EN'=8, 'VU'=7, 'NT'=4, 'LC'=2, 'DD'=1, 'NE'=1, 'LR/cd'=2)[status]
+  unlist(lapply(importance, function(x) ifelse(is.null(x), 1, x)))
+}
 redlisttable <- taxa %>% filter(!is.na(redlist) & redlist == TRUE) %>% 
   mutate(perc_ebsa = (ebsa_record_count / records) * 100, 
-         statusimportance = unlist(list('EX'=10, 'EW'=10, 'CR'=10, 'EN'=8, 'VU'=7, 'NT'=4, 'LC'=2, 'DD'=1)[status]),
+         statusimportance = statusimportance(status),
          rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5 + exprank(statusimportance)) %>%
-  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  arrange(desc(rank)) %>% head(top) %>% 
   select(Name=tname, Group=taxonomicgroup, Status=status, 
          'Total records' = records, 'Area records'= ebsa_record_count,
          '% in area' = perc_ebsa)
@@ -116,11 +166,11 @@ knitr::kable(redlisttable, digits = 2)
 
 # Invasive species (top `r top`)
 
-```{r}
+```{r invasivesp}
 invasivestable <- taxa %>% filter(!is.na(gisd) & gisd == TRUE) %>% 
   mutate(perc_ebsa = (ebsa_record_count / records) * 100,
          rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5) %>%
-  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  arrange(desc(rank)) %>% head(top) %>% 
   select(Name=tname, Group=taxonomicgroup, 'Total records' = records, 
          'Area records'= ebsa_record_count, '% in area' = perc_ebsa)
 knitr::kable(invasivestable, digits = 2)
@@ -128,11 +178,11 @@ knitr::kable(invasivestable, digits = 2)
 
 # Harmful microalgae (top `r top`)
 
-```{r}
+```{r harmfulsp}
 habtable <- taxa %>% filter(!is.na(hab) & hab == TRUE) %>% 
   mutate(perc_ebsa = (ebsa_record_count / records) * 100,
          rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5) %>%
-  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  arrange(desc(rank)) %>% head(top) %>% 
   select(Name=tname, Group=taxonomicgroup, 'Total records' = records, 
          'Area records'= ebsa_record_count, '% in area' = perc_ebsa)
 knitr::kable(habtable, digits = 2)
@@ -140,11 +190,11 @@ knitr::kable(habtable, digits = 2)
 
 # Observed in this area only (top `r top`)
 
-```{r}
+```{r endemicsp}
 onlyobservedtable <- taxa %>% filter(!is.na(only_observed_here) & only_observed_here == TRUE) %>% 
   mutate(perc_ebsa = (ebsa_record_count / records) * 100,
          rank = exprank(perc_ebsa) + exprank(ebsa_record_count) * 0.5) %>%
-  arrange(desc(rank)) %>% top_n(top, rank) %>% 
+  arrange(desc(rank)) %>% head(top) %>% 
   select(Name=tname, Group=taxonomicgroup, 'Total records' = records, 
          'Area records'= ebsa_record_count, '% in area' = perc_ebsa)
 knitr::kable(onlyobservedtable, digits = 2)
@@ -152,15 +202,14 @@ knitr::kable(onlyobservedtable, digits = 2)
 
 # Newest species in this area (top `r top`)
 
-```{r}
+```{r newestsp}
 newesttable <- occ %>% 
   group_by(valid_id, taxonomicgroup) %>% 
-  summarise(max_year=max(year)) %>% 
+  summarise(max_year=max(year)) %>% ungroup() %>% 
   left_join(taxa) %>% 
   filter(rank_name == "Species" & !is.na(max_year)) %>% 
-  arrange(desc(max_year)) %>% 
-  top_n(top, max_year) %>%
-  mutate(perc_ebsa = (ebsa_record_count / records) * 100) %>%
+  arrange(desc(max_year)) %>% head(top) %>%
+  mutate(perc_ebsa = (ebsa_record_count / records) * 100) %>% ungroup() %>%
   select(Name = tname, Records = records, 'Area records' = ebsa_record_count, 
          '% in area' = perc_ebsa, 'Last record' = max_year)
 
@@ -169,14 +218,14 @@ knitr::kable(newesttable, digits = 2)
 
 # No longer observed in this area since 1950 (top `r top`)
 
-```{r}
+```{r nolongerobservedsp}
 before1950table <- occ %>% 
   group_by(valid_id, taxonomicgroup) %>% 
-  summarise(max_year=max(year)) %>% 
+  summarise(max_year=max(year)) %>% ungroup() %>%
   left_join(taxa) %>% 
   filter(rank_name == "Species" & !is.na(max_year) & max_year < 1950) %>% 
   arrange(desc(ebsa_record_count)) %>% 
-  top_n(top, ebsa_record_count) %>%
+  head(top) %>%
   mutate(perc_ebsa = (ebsa_record_count / records) * 100) %>%
   select(Name = tname, Records = records, 'Area records' = ebsa_record_count, 
          '% in area' = perc_ebsa, 'Last record' = max_year)
@@ -184,29 +233,48 @@ before1950table <- occ %>%
 knitr::kable(before1950table, digits = 2)
 ```
 
+\newpage
+\blandscape
+
 # Datasets (top `r top`)
 
-```{r}
+```{r topdatasets}
 datasetstable <- data$datasets %>% 
   arrange(desc(ebsa_record_count)) %>%
-  top_n(top, ebsa_record_count) %>%
-  mutate(perc_ebsa = (ebsa_record_count / records) * 100) %>%
+  head(top) %>%
+  mutate(perc_ebsa = (ebsa_record_count / record_cnt) * 100) %>%
   select(Name=name, Node=node, Provider=provider, 
          Taxa=taxon_cnt, 'Area taxa' = ebsa_taxa_count, 
          Records=record_cnt, 'Area records'=ebsa_record_count,
          '% in area' = perc_ebsa)
-knitr::kable(datasetstable, digits = 2)
+
+knitr::kable(datasetstable, digits = 2, format="latex", booktabs=TRUE) %>%
+  kableExtra::kable_styling(latex_options = "scale_down") %>%
+  kableExtra::column_spec(1, width = "7cm") %>%
+  kableExtra::column_spec(3, width = "7cm")
 ```
+
+\newpage
 
 # Institutes (top `r top`)
 
-```{r}
-institutestable <- data$institutes %>%
+```{r topinstitutes}
+data$institutes[is.na(data$institutes)] <- ''
+institutestable <- data$institutes %>% ungroup() %>%
   arrange(desc(ebsa_record_count)) %>%
-  top_n(top, ebsa_record_count) %>%
+  head(top) %>%
+  
   select(Name = name, Acronym = acronym, 'Parent institute' = parent, 
          Datasets = datasets, 'Area taxa'=ebsa_taxa_count, 
          'Area records' = ebsa_record_count)
-knitr::kable(institutestable, digits = 2)
+
+knitr::kable(institutestable, digits = 2, format="latex", booktabs = TRUE) %>%
+  kableExtra::kable_styling(latex_options = "scale_down") %>%
+  kableExtra::column_spec(1, width = "7cm") %>%
+  kableExtra::column_spec(3, width = "7cm")
 ```
+
+\elandscape
+
+
 
