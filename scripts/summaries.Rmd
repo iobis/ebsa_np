@@ -7,6 +7,7 @@ output:
     fig_height: 4
 params: 
   ebsafile: ""
+  ebsaname: ""
   id: ""
 editor_options: 
   chunk_output_type: inline
@@ -19,7 +20,7 @@ header-includes:
 ---
 
 ---
-title: "EBSA summaries (`r params$id`)"
+title: "`r params$ebsaname` (`r params$id`)"
 ---
 
 ```{r getdata, include=FALSE}
