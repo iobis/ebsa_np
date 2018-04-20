@@ -2,3 +2,8 @@
 **/.Rhistory
 .Rproj
 .Rproj.user
+
+data/*.rds
+reports/*.pdf
+!data/ebsa_NP_19.rds
+!reports/ebsa_NP_19.pdf
