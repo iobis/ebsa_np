@@ -37,28 +37,28 @@ if(file.exists(params$ebsafile)) {
   data <- readRDS(params$ebsafile)
 } else {
   warning("USING TEST FILE")
-  data <- readRDS('../data/ebsa_SEA_16.rds')
+  data <- readRDS('../data/ebsa_SP_2.rds')
 }
 
 if(NROW(data$occ) == 0) {
-  print("No records found")
+  cat("No records found")
   knitr::knit_exit()
-}
-
-occ <- data$occ %>% as_tibble()
-
-occ$year <- as.integer(occ$year)
-taxa <- data$taxa %>% as_tibble()
-for(col in c('redlist', 'gisd', 'hab', 'status')) {
-  if(!col %in% colnames(taxa)) {
-    taxa[,col] <- rep(NA, NROW(taxa))
+} else {
+  occ <- data$occ %>% as_tibble()
+  
+  occ$year <- as.integer(occ$year)
+  taxa <- data$taxa %>% as_tibble()
+  for(col in c('redlist', 'gisd', 'hab', 'status')) {
+    if(!col %in% colnames(taxa)) {
+      taxa[,col] <- rep(NA, NROW(taxa))
+    }
   }
+  species_taxonomicgroups <- occ %>% select(valid_id, taxonomicgroup) %>% distinct()
+  taxa <- taxa %>% left_join(species_taxonomicgroups)
+  taxa[,'only_observed_here'] <- !is.na(taxa$rank_name) & taxa$rank_name == 'Species' & taxa$ebsa_record_count >= taxa$records
+  
+  top <- 20
 }
-species_taxonomicgroups <- occ %>% select(valid_id, taxonomicgroup) %>% distinct()
-taxa <- taxa %>% left_join(species_taxonomicgroups)
-taxa[,'only_observed_here'] <- !is.na(taxa$rank_name) & taxa$rank_name == 'Species' & taxa$ebsa_record_count >= taxa$records
-
-top <- 20
 ```
 
 # Overview
