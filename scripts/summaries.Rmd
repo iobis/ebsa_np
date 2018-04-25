@@ -23,11 +23,12 @@ header-includes:
 title: "`r params$ebsaname` (`r params$id`)"
 ---
 
-```{r getdata, include=FALSE}
+```{r initoptions, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(warning = TRUE)
 knitr::opts_chunk$set(message = FALSE)
-
+```
+```{r getdata}
 library(dplyr)
 library(ggplot2)
 library(sf)
@@ -36,14 +37,21 @@ if(file.exists(params$ebsafile)) {
   data <- readRDS(params$ebsafile)
 } else {
   warning("USING TEST FILE")
-  data <- readRDS('../data/ebsa_NP_19.rds')
+  data <- readRDS('../data/ebsa_SEA_16.rds')
+}
+
+if(NROW(data$occ) == 0) {
+  print("No records found")
+  knitr::knit_exit()
 }
 
 occ <- data$occ %>% as_tibble()
+
+occ$year <- as.integer(occ$year)
 taxa <- data$taxa %>% as_tibble()
 for(col in c('redlist', 'gisd', 'hab', 'status')) {
   if(!col %in% colnames(taxa)) {
-    taxa[,col] <- NA
+    taxa[,col] <- rep(NA, NROW(taxa))
   }
 }
 species_taxonomicgroups <- occ %>% select(valid_id, taxonomicgroup) %>% distinct()
@@ -51,7 +59,6 @@ taxa <- taxa %>% left_join(species_taxonomicgroups)
 taxa[,'only_observed_here'] <- !is.na(taxa$rank_name) & taxa$rank_name == 'Species' & taxa$ebsa_record_count >= taxa$records
 
 top <- 20
-
 ```
 
 # Overview
@@ -59,7 +66,7 @@ top <- 20
 ```{r overview}
 overview <- list(Records = nrow(occ),
      Datasets = length(unique(occ$resource_id)),
-     'Contributing institutes'= length(unique(occ$institutionCode)),
+     'Contributing institutes'= length(unique(na.omit(occ$institutionCode))),
      Taxa = nrow(taxa),
      Species = data$taxa %>% filter(!is.na(rank_name) & rank_name == 'Species') %>% nrow,
      'Red List species' = taxa %>% filter(!is.na(redlist) & redlist == TRUE) %>% nrow,
@@ -100,7 +107,7 @@ ggplot() +
 # Records per year and taxonomic group (1950 - present)
 
 ```{r peryearpertaxa}
-ggplot(occ %>% filter(year >= 1950), aes(year, fill=taxonomicgroup)) + 
+ggplot(occ %>% filter(!is.na(year) & year >= 1950), aes(year, fill=taxonomicgroup)) + 
   geom_bar() +
   theme(legend.position="bottom") +
   labs(fill="Taxonomic group", x="Year", y="Count") +
@@ -122,7 +129,12 @@ ggplot(occ, aes(x=taxonomicgroup, fill=taxonomicgroup)) +
 # Species accumulation (1950 - present)
 
 ```{r spacc}
-countbyyear <- occ %>% filter(!is.na(year)) %>% group_by(year) %>% summarise(count=n())
+countbyyear <- occ %>% 
+  filter(!is.na(as.numeric(year))) %>% 
+  group_by(year) %>% 
+  summarise(count=n()) %>%
+  right_join(., data_frame(year=1950:as.integer(format(Sys.Date(), "%Y"))))
+countbyyear$count[is.na(countbyyear$count)] <- 0
 
 ggplot(countbyyear, aes(x=as.numeric(year), y=cumsum(count))) + 
   geom_bar(stat="identity") + 
@@ -131,13 +143,17 @@ ggplot(countbyyear, aes(x=as.numeric(year), y=cumsum(count))) +
 ```
 
 
-# Sampling events
+# Sampling events (1950 - present)
 
 ```{r samplingevents}
-eventsbyyear <- occ %>% select(year, eventDate, resource_id, depth, decimalLongitude, decimalLatitude) %>% 
+eventsbyyear <- occ %>% 
+  filter(!is.na(eventDate) & !is.na(as.numeric(year))) %>% 
+  select(year, eventDate, resource_id, depth, decimalLongitude, decimalLatitude) %>% 
   distinct() %>% 
   group_by(year) %>% 
-  summarise(count=n())
+  summarise(count=n()) %>%
+  right_join(., data_frame(year=1950:as.integer(format(Sys.Date(), "%Y"))))
+eventsbyyear$count[is.na(eventsbyyear$count)] <- 0
 
 ggplot(eventsbyyear, aes(x=as.numeric(year), y=count)) + 
   geom_bar(stat = "identity") + 
@@ -152,7 +168,11 @@ ggplot(eventsbyyear, aes(x=as.numeric(year), y=count)) +
 exprank <- function(values) { 1000**(rank(values, na.last=FALSE, ties.method = 'max') / length(values)) }
 statusimportance <- function(status) {
   importance <- list('EX'=10, 'EW'=10, 'CR'=10, 'EN'=8, 'VU'=7, 'NT'=4, 'LC'=2, 'DD'=1, 'NE'=1, 'LR/cd'=2)[status]
-  unlist(lapply(importance, function(x) ifelse(is.null(x), 1, x)))
+  si <- unlist(lapply(importance, function(x) ifelse(is.null(x), 1, x)))
+  if(is.null(si)) {
+    si <- integer(0) 
+  }
+  si
 }
 redlisttable <- taxa %>% filter(!is.na(redlist) & redlist == TRUE) %>% 
   mutate(perc_ebsa = (ebsa_record_count / records) * 100, 
@@ -204,7 +224,7 @@ knitr::kable(onlyobservedtable, digits = 2)
 # Newest species in this area (top `r top`)
 
 ```{r newestsp}
-newesttable <- occ %>% 
+newesttable <- occ %>% filter(!is.na(year)) %>%
   group_by(valid_id, taxonomicgroup) %>% 
   summarise(max_year=max(year)) %>% ungroup() %>% 
   left_join(taxa) %>% 
@@ -220,7 +240,7 @@ knitr::kable(newesttable, digits = 2)
 # No longer observed in this area since 1950 (top `r top`)
 
 ```{r nolongerobservedsp}
-before1950table <- occ %>% 
+before1950table <- occ %>% filter(!is.na(year)) %>%
   group_by(valid_id, taxonomicgroup) %>% 
   summarise(max_year=max(year)) %>% ungroup() %>%
   left_join(taxa) %>% 
